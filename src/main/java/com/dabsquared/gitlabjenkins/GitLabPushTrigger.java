@@ -6,9 +6,13 @@ import com.dabsquared.gitlabjenkins.connection.GitLabConnectionProperty;
 import com.dabsquared.gitlabjenkins.model.MergeRequestHook;
 import com.dabsquared.gitlabjenkins.model.PushHook;
 import com.dabsquared.gitlabjenkins.model.WebHook;
+import com.dabsquared.gitlabjenkins.publisher.GitLabCommitStatusPublisher;
+import com.dabsquared.gitlabjenkins.trigger.BranchFilterType;
 import com.dabsquared.gitlabjenkins.webhook.GitLabWebHook;
 import hudson.Extension;
 import hudson.Util;
+import hudson.init.InitMilestone;
+import hudson.init.Initializer;
 import hudson.model.Action;
 import hudson.model.AutoCompletionCandidates;
 import hudson.model.Item;
@@ -93,7 +97,8 @@ public class GitLabPushTrigger extends Trigger<Job<?, ?>> {
     private boolean addCiMessage = false;
     private boolean addVoteOnMergeRequest = true;
     private transient boolean allowAllBranches = false;
-    private final String branchFilterName;
+    private transient String branchFilterName;
+    private BranchFilterType branchFilterType;
     private final String includeBranchesSpec;
     private final String excludeBranchesSpec;
     private final String targetBranchRegex;
@@ -103,7 +108,7 @@ public class GitLabPushTrigger extends Trigger<Job<?, ?>> {
     @DataBoundConstructor
     public GitLabPushTrigger(boolean triggerOnPush, boolean triggerOnMergeRequest, String triggerOpenMergeRequestOnPush,
                              boolean ciSkip, boolean setBuildDescription, boolean addNoteOnMergeRequest, boolean addCiMessage,
-                             boolean addVoteOnMergeRequest, boolean acceptMergeRequestOnSuccess, String branchFilterName,
+                             boolean addVoteOnMergeRequest, boolean acceptMergeRequestOnSuccess, BranchFilterType branchFilterType,
                              String includeBranchesSpec, String excludeBranchesSpec, String targetBranchRegex) {
         this.triggerOnPush = triggerOnPush;
         this.triggerOnMergeRequest = triggerOnMergeRequest;
@@ -113,11 +118,23 @@ public class GitLabPushTrigger extends Trigger<Job<?, ?>> {
         this.addNoteOnMergeRequest = addNoteOnMergeRequest;
         this.addCiMessage = addCiMessage;
         this.addVoteOnMergeRequest = addVoteOnMergeRequest;
-        this.branchFilterName = branchFilterName;
+        this.branchFilterType = branchFilterType;
         this.includeBranchesSpec = includeBranchesSpec;
         this.excludeBranchesSpec = excludeBranchesSpec;
         this.targetBranchRegex = targetBranchRegex;
         this.acceptMergeRequestOnSuccess = acceptMergeRequestOnSuccess;
+    }
+
+    @Initializer(after = InitMilestone.JOB_LOADED)
+    public static void migrate() throws IOException {
+        for (AbstractProject<?, ?> project : Jenkins.getInstance().getAllItems(AbstractProject.class)) {
+            GitLabPushTrigger trigger = project.getTrigger(GitLabPushTrigger.class);
+            if (trigger != null && trigger.branchFilterType == null) {
+                String name = StringUtils.isNotEmpty(trigger.branchFilterName) ? trigger.branchFilterName : "All";
+                trigger.branchFilterType = BranchFilterType.valueOf(name);
+                project.save();
+            }
+        }
     }
 
     public boolean getTriggerOnPush() {
@@ -168,66 +185,12 @@ public class GitLabPushTrigger extends Trigger<Job<?, ?>> {
         return ciSkip;
     }
 
-    private boolean isAllowedByTargetBranchRegex(String branchName) {
-        final String regex = this.getTargetBranchRegex();
-
-        if (StringUtils.isEmpty(regex)) {
-            return true;
-        }
-        final Pattern pattern = Pattern.compile(regex);
-        return pattern.matcher(branchName).matches();
-    }
-
-    private boolean isAllowedByList(final String branchName) {
-
-        final List<String> exclude = DescriptorImpl.splitBranchSpec(this.getExcludeBranchesSpec());
-        final List<String> include = DescriptorImpl.splitBranchSpec(this.getIncludeBranchesSpec());
-        if (exclude.isEmpty() && include.isEmpty()) {
-            return true;
-        }
-
-        final AntPathMatcher matcher = new AntPathMatcher();
-        for (final String pattern : exclude) {
-            if (matcher.match(pattern, branchName)) {
-                return false;
-            }
-        }
-        for (final String pattern : include) {
-            if (matcher.match(pattern, branchName)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private boolean isBranchAllowed(final String branchName) {
-
-        final String branchFilterName = this.getBranchFilterName();
-        if (branchFilterName.isEmpty()) {
-            // no filter is applied, allow all branches
-            return true;
-        }
-
-        if (Objects.equal(branchFilterName, "NameBasedFilter")) {
-            return this.isAllowedByList(branchName);
-        }
-
-        if (Objects.equal(branchFilterName, "RegexBasedFilter")) {
-            return this.isAllowedByTargetBranchRegex(branchName);
-        }
-
-        return false;
+        return branchFilterType.isBranchAllowed(branchName, this);
     }
 
-    // TODO use an enum instead of a String for this
-    public String getBranchFilterName() {
-        // TODO move this to a migration method during code cleanup
-        if (branchFilterName == null) {
-            return  allowAllBranches ? "" : "NameBasedFilter";
-        } else {
-            return branchFilterName;
-        }
+    public BranchFilterType getBranchFilterType() {
+        return branchFilterType;
     }
 
     public String getIncludeBranchesSpec() {
@@ -663,33 +626,6 @@ public class GitLabPushTrigger extends Trigger<Job<?, ?>> {
             }
 
             return null;
-        }
-
-        /**
-         * Get the Name of the first declared repository in the project configuration.
-         * Use this as default source repository Name.
-         *
-         * @return String with the default name of the source repository
-         */
-        protected String getSourceRepoNameDefault(Job job) {
-            String result = null;
-            SCMTriggerItem item = SCMTriggerItems.asSCMTriggerItem(job);
-            GitSCM gitSCM = getGitSCM(item);
-            if(gitSCM == null) {
-                LOGGER.log(
-                        Level.WARNING,
-                        "Could not find GitSCM for project. Project = {1}, next build = {2}",
-                        new String[] {
-                                project.getName(),
-                                String.valueOf(project.getNextBuildNumber()) });
-                throw new IllegalArgumentException("This project does not use git:" + project.getName());
-            } else {
-                List<RemoteConfig> repositories = gitSCM.getRepositories();
-                if (!repositories.isEmpty()){
-                    result = repositories.get(repositories.size()-1).getName();
-                }
-            }
-            return result;
         }
 
         public GitLab getGitlab() {

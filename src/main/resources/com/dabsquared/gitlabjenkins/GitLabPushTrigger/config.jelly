@@ -29,11 +29,11 @@
     <f:block>
         <table style="margin-left:10px">
             <!--<f:section title="">-->
-            <f:radioBlock name="branchFilterName" value="" title="Allow all branches to trigger this job"
-                          checked="${instance.branchFilterName == '' || instance.branchFilterName == null}"
+            <f:radioBlock name="branchFilterType" value="All" title="Allow all branches to trigger this job"
+                          checked="${instance.branchFilterType == null || instance.branchFilterType == 'All'}"
                           inline="true" help="/plugin/gitlab-plugin/help/help-noBranchFiltering.html"/>
-            <f:radioBlock name="branchFilterName" value="NameBasedFilter" title="Filter branches by name"
-                          checked="${instance.branchFilterName == 'NameBasedFilter'}" inline="true"
+            <f:radioBlock name="branchFilterType" value="NameBasedFilter" title="Filter branches by name"
+                          checked="${instance.branchFilterType == 'NameBasedFilter'}" inline="true"
                           help="/plugin/gitlab-plugin/help/help-allowedBranches.html">
                 <f:entry title="Include">
                     <f:textbox field="includeBranchesSpec" autoCompleteDelimChar=","/>
@@ -43,8 +43,8 @@
                 </f:entry>
             </f:radioBlock>
 
-            <f:radioBlock name="branchFilterName" value="RegexBasedFilter" title="Filter branches by regex"
-                          checked="${instance.branchFilterName == 'RegexBasedFilter'}" inline="true"
+            <f:radioBlock name="branchFilterType" value="RegexBasedFilter" title="Filter branches by regex"
+                          checked="${instance.branchFilterType == 'RegexBasedFilter'}" inline="true"
                           help="/plugin/gitlab-plugin/help/help-filterBranchesByRegex.html">
                 <f:entry title="Target Branch Regex">
                     <f:textbox field="targetBranchRegex"/>
